@@ -364,7 +364,7 @@ func DumpFacts(builder *CFGBuilder, factsInFolder string) {
 	}
 	for tname, t := range builder.Transitions {
 		fmt.Println("transition", tname)
-		fact := fmt.Sprintf("%d", t.ID())
+		fact := fmt.Sprintf("%d\t%s", t.ID(), tname)
 		fd.transitionFacts = append(fd.transitionFacts, fact)
 		Walk(&fd, t, nil)
 	}

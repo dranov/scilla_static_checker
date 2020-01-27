@@ -6,12 +6,12 @@
     .type ElementInContext = [element: Element, context: Context]
 
     .decl contextForInit(element: Element, context : Context)
-    contextForInit(transitionId, nil) :- transition(transitionId).
+    contextForInit(transitionId, nil) :- transition(transitionId, _).
 
     .decl context(context: Context)
     .decl executionState(element: Element, context: Context)
     context(context), executionState(element, context) :- 
-        transition(element), contextForInit(element, context).
+        transition(element, _), contextForInit(element, context).
 
     // if the node does not depend on an appDD, just propagate the context
     context(context) ,executionState(elementId, context) :-

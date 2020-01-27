@@ -64,7 +64,7 @@ func main() {
 	// Results output
 	fmt.Println("======RESULTS======")
 
-	outputFiles := []string{"patternMatch.csv", "patternMatchInfo.csv"}
+	outputFiles := []string{"patternMatch.csv", "patternMatchInfo.csv", "fieldContribField.csv", "fieldContribArg.csv", "fieldOps.csv"}
 	for _, f := range outputFiles {
 		result, err := souffle.ReadOutput(path.Join(factsOutFolder, f))
 		if err != nil {

@@ -32,7 +32,7 @@
         
     .decl zillingUnit(unitIdCtx: ctxProvider.ElementInContext)
     zillingUnit(unitIdCtx) :-
-        transition(transId),
+        transition(transId, _),
         argument(transId, unitId, 0),
         ctxProvider.elementInContext(unitIdCtx, unitId, _).
 

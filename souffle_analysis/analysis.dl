@@ -78,3 +78,115 @@ planApp(unitId):-
     appTD(unitId, _), plan(_, unitId, _).
 
 .output planApp
+
+// builtin tracking
+.decl fieldOps(transitionName: symbol, fieldName: symbol, builtinName: symbol)
+fieldOps(transitionName, fieldName, builtinName) :-
+    transition(transitionId, transitionName),
+    follows(transitionId, saveId),
+    save(saveId, fieldName, _),
+    appDD(appDDId, _),
+    follows(saveId, appDDId),
+    builtin(builtinId, _, builtinName),
+    follows(appDDId, builtinId).
+
+.output fieldOps
+
+// field contributions
+.decl fieldContribFieldCount(transitionName: symbol, fieldName: symbol, contributorName: symbol, c: number) inline
+fieldContribFieldCount(transitionName, fieldName, contributorName, c) :-
+    transition(transitionId, transitionName),
+    follows(transitionId, saveId),
+
+    save(saveId, fieldName, _),
+    load(_, contributorName),
+
+    // Implementation detail: fieldContribFieldCount can return multiple
+    // counts for a given (trans, fn, cn) tuple IF there is more than
+    // one save to that field, since we technically count dependencies
+    // per *save*, not per field
+    c = count : {
+        // Find load our save depends on
+        load(loadId, contributorName),
+        follows(saveId, loadId),
+
+        // Count how many uses of that load we depend on
+        follows(saveId, loadUserId),
+        followsStep(loadUserId, loadId)
+    }.
+
+// .output fieldContribFieldCount
+
+// The implementation detail described above, combined with Datalog's
+// stratification limitations, forces us to do some "manual" stratification
+// so we don't get both "One" and "Many" results for the same field
+.decl _fieldContribField(transitionName: symbol, fieldName: symbol, contributorName: symbol, card: Cardinality)
+_fieldContribField(transitionName, fieldName, contributorName, "One") :-
+    c = 1,
+    fieldContribFieldCount(transitionName, fieldName, contributorName, c).
+
+_fieldContribField(transitionName, fieldName, contributorName, "Many") :-
+    c >= 2,
+    fieldContribFieldCount(transitionName, fieldName, contributorName, c).
+
+
+.decl fieldContribField(transitionName: symbol, fieldName: symbol, contributorName: symbol, card: Cardinality)
+fieldContribField(transitionName, fieldName, contributorName, "One") :-
+    _fieldContribField(transitionName, fieldName, contributorName, "One"),
+    !_fieldContribField(transitionName, fieldName, contributorName, "Many").
+
+fieldContribField(transitionName, fieldName, contributorName, "Many") :-
+    _fieldContribField(transitionName, fieldName, contributorName, "Many").
+
+.output fieldContribField
+
+// transition argument contributions
+.decl fieldContribArgCount(transitionName: symbol, fieldName: symbol, argIndex: number, c: number)
+fieldContribArgCount(transitionName, fieldName, argIndex, c) :-
+    transition(transitionId, transitionName),
+    follows(transitionId, saveId),
+    save(saveId, fieldName, _),
+    argument(transitionId, argumentId, argIndex),
+
+    // There are two ways an argument can be used:
+    // 1) directly, e.g. field := arg
+    // 2) indirectly, e.g. field := q, where q depends on arg
+    // This contrasts with field reads, which can only be used indirectly,
+    // i.e. field1 := field2 does not typecheck
+
+    // This will always be either 0 or 1
+    direct_uses = count : {
+        // argumentID is the Data of the save
+        followsStep(saveId, argumentId)
+    },
+
+    indirect_uses = count : {
+        follows(saveId, argumentUserId),
+        followsStep(argumentUserId, argumentId)
+    },
+
+    // FIXME: having the following line seems to not produce any output
+    //  when direct_uses is 0; this is possibly a BUG in Souffle
+    // c != 0,
+    c = direct_uses + indirect_uses.
+
+.output fieldContribArgCount
+
+.decl _fieldContribArg(transitionName: symbol, fieldName: symbol, argIndex: number, card: Cardinality)
+_fieldContribArg(transitionName, fieldName, argIndex, "One") :-
+    c = 1,
+    fieldContribArgCount(transitionName, fieldName, argIndex, c).
+
+_fieldContribArg(transitionName, fieldName, argIndex, "Many") :-
+    c >= 2,
+    fieldContribArgCount(transitionName, fieldName, argIndex, c).
+
+.decl fieldContribArg(transitionName: symbol, fieldName: symbol, argIndex: number, card: Cardinality)
+fieldContribArg(transitionName, fieldName, argIndex, "One") :-
+    _fieldContribArg(transitionName, fieldName, argIndex, "One"),
+    !_fieldContribArg(transitionName, fieldName, argIndex, "Many").
+
+fieldContribArg(transitionName, fieldName, argIndex, "Many") :-
+    _fieldContribArg(transitionName, fieldName, argIndex, "Many").
+
+.output fieldContribArg

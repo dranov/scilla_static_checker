@@ -6,6 +6,10 @@
 .type Element = Unit | Type | Proc | Plan
 .type Function = Proc
 
+.symbol_type One
+.symbol_type Many
+.type Cardinality = One | Many
+
 .decl absDD(unitId: Unit, term: Unit)
 .decl absTD(unitId: Unit, term: Unit)
 .decl absTT(unitId: Unit, term: Unit)
@@ -52,7 +56,7 @@
 .decl setKind(unitId: Unit)
 .decl str(unitId: Unit, type: Type, data: symbol)
 .decl strType(type_id: Type)
-.decl transition(unitId: Unit)
+.decl transition(unitId: Unit, name: symbol)
 .decl typeVar(type: symbol)
 .decl unit(unitId: Unit)
 
