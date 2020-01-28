@@ -79,30 +79,71 @@ planApp(unitId):-
 
 .output planApp
 
+// Field contribution tracking
+
+// pseudo-fields are either normal fields or map accesses (load/save)
+// for maps with only one level of keys, e.g. Map ByStr20 Uint128
+// with `unitId`, we keep track which access corresponds to this pseudofield
+.decl pseudofield(unitId: Unit, baseField: symbol, mapKey: symbol)
+
+pseudofield(unitId, baseField, "") :-
+    (save(unitId, baseField, _) ; load(unitId, baseField)),
+    // No keys, i.e. this is a "normal" field access
+    !argument(unitId, _, _),
+
+    // This is needed so we do not consider field accesses that happen
+    // during contract initialization
+    transition(transitionId, _),
+    follows(transitionId, unitId).
+
+// Accesses where the key is a transition argument
+pseudofield(unitId, baseField, mapKey) :-
+    (save(unitId, baseField, _) ; load(unitId, baseField)),
+    transition(transitionId, transitionName),
+    follows(transitionId, unitId),
+
+    // Just one key accessed in this map
+    num_args = count : {
+       argument(unitId, _, _)
+    },
+    num_args = 1,
+
+    argument(unitId, argumentId, _),
+    argument(transitionId, argumentId, argIndex),
+
+    mapKey = cat(cat(transitionName, "."), to_string(argIndex)).
+
+.output pseudofield
+
 // builtin tracking
-.decl fieldOps(transitionName: symbol, fieldName: symbol, builtinName: symbol)
-fieldOps(transitionName, fieldName, builtinName) :-
+.decl fieldOps(transitionName: symbol, baseField: symbol, mapKey: symbol, builtinName: symbol)
+fieldOps(transitionName, baseField, mapKey, builtinName) :-
     transition(transitionId, transitionName),
     follows(transitionId, saveId),
-    save(saveId, fieldName, _),
+    save(saveId, baseField, _),
     appDD(appDDId, _),
     follows(saveId, appDDId),
     builtin(builtinId, _, builtinName),
-    follows(appDDId, builtinId).
+    follows(appDDId, builtinId),
+    // populate mapKey when the save is to a pseudofield; "" if not
+    pseudofield(saveId, baseField, mapKey).
 
 .output fieldOps
 
 // field contributions
-.decl fieldContribFieldCount(transitionName: symbol, fieldName: symbol, contributorName: symbol, c: number) inline
-fieldContribFieldCount(transitionName, fieldName, contributorName, c) :-
+.decl fieldContribFieldCount(saveId: Unit, transitionName: symbol, fieldName: symbol, fieldKey: symbol, contributorName: symbol, c: number)
+fieldContribFieldCount(saveId, transitionName, fieldName, fieldKey, contributorName, c) :-
     transition(transitionId, transitionName),
     follows(transitionId, saveId),
 
     save(saveId, fieldName, _),
     load(_, contributorName),
 
+    // populate mapKey
+    pseudofield(saveId, fieldName, fieldKey),
+
     // Implementation detail: fieldContribFieldCount can return multiple
-    // counts for a given (trans, fn, cn) tuple IF there is more than
+    // counts for a given (trans, fn, fk, cn) tuple IF there is more than
     // one save to that field, since we technically count dependencies
     // per *save*, not per field
     c = count : {
@@ -115,34 +156,34 @@ fieldContribFieldCount(transitionName, fieldName, contributorName, c) :-
         followsStep(loadUserId, loadId)
     }.
 
-// .output fieldContribFieldCount
+.output fieldContribFieldCount
 
 // The implementation detail described above, combined with Datalog's
 // stratification limitations, forces us to do some "manual" stratification
 // so we don't get both "One" and "Many" results for the same field
-.decl _fieldContribField(transitionName: symbol, fieldName: symbol, contributorName: symbol, card: Cardinality)
-_fieldContribField(transitionName, fieldName, contributorName, "One") :-
+.decl _fieldContribField(transitionName: symbol, fieldName: symbol, fieldKey: symbol, contributorName: symbol, card: Cardinality)
+_fieldContribField(transitionName, fieldName, fieldKey, contributorName, "One") :-
     c = 1,
-    fieldContribFieldCount(transitionName, fieldName, contributorName, c).
+    fieldContribFieldCount(_, transitionName, fieldName, fieldKey, contributorName, c).
 
-_fieldContribField(transitionName, fieldName, contributorName, "Many") :-
+_fieldContribField(transitionName, fieldName, fieldKey, contributorName, "Many") :-
     c >= 2,
-    fieldContribFieldCount(transitionName, fieldName, contributorName, c).
+    fieldContribFieldCount(_, transitionName, fieldName, fieldKey, contributorName, c).
 
 
-.decl fieldContribField(transitionName: symbol, fieldName: symbol, contributorName: symbol, card: Cardinality)
-fieldContribField(transitionName, fieldName, contributorName, "One") :-
-    _fieldContribField(transitionName, fieldName, contributorName, "One"),
-    !_fieldContribField(transitionName, fieldName, contributorName, "Many").
+.decl fieldContribField(transitionName: symbol, fieldName: symbol, fieldKey: symbol, contributorName: symbol, card: Cardinality)
+fieldContribField(transitionName, fieldName, fieldKey, contributorName, "One") :-
+    _fieldContribField(transitionName, fieldName, fieldKey, contributorName, "One"),
+    !_fieldContribField(transitionName, fieldName, fieldKey, contributorName, "Many").
 
-fieldContribField(transitionName, fieldName, contributorName, "Many") :-
-    _fieldContribField(transitionName, fieldName, contributorName, "Many").
+fieldContribField(transitionName, fieldName, fieldKey, contributorName, "Many") :-
+    _fieldContribField(transitionName, fieldName, fieldKey, contributorName, "Many").
 
 .output fieldContribField
 
 // transition argument contributions
-.decl fieldContribArgCount(transitionName: symbol, fieldName: symbol, argIndex: number, c: number)
-fieldContribArgCount(transitionName, fieldName, argIndex, c) :-
+.decl fieldContribArgCount(transitionName: symbol, fieldName: symbol, fieldKey: symbol, transArg: symbol, argIndex: number, c: number)
+fieldContribArgCount(transitionName, fieldName, fieldKey, transArg, argIndex, c) :-
     transition(transitionId, transitionName),
     follows(transitionId, saveId),
     save(saveId, fieldName, _),
@@ -168,25 +209,29 @@ fieldContribArgCount(transitionName, fieldName, argIndex, c) :-
     // FIXME: having the following line seems to not produce any output
     //  when direct_uses is 0; this is possibly a BUG in Souffle
     // c != 0,
-    c = direct_uses + indirect_uses.
+    c = direct_uses + indirect_uses,
+
+    // populate fieldKey and transArg
+    pseudofield(saveId, fieldName, fieldKey),
+    transArg = cat(cat(transitionName, "."), to_string(argIndex)).
 
 .output fieldContribArgCount
 
-.decl _fieldContribArg(transitionName: symbol, fieldName: symbol, argIndex: number, card: Cardinality)
-_fieldContribArg(transitionName, fieldName, argIndex, "One") :-
+.decl _fieldContribArg(transitionName: symbol, fieldName: symbol, fieldKey: symbol, transArg: symbol, argIndex: number, card: Cardinality)
+_fieldContribArg(transitionName, fieldName, fieldKey, transArg, argIndex, "One") :-
     c = 1,
-    fieldContribArgCount(transitionName, fieldName, argIndex, c).
+    fieldContribArgCount(transitionName, fieldName, fieldKey, transArg, argIndex, c).
 
-_fieldContribArg(transitionName, fieldName, argIndex, "Many") :-
+_fieldContribArg(transitionName, fieldName, fieldKey, transArg, argIndex, "Many") :-
     c >= 2,
-    fieldContribArgCount(transitionName, fieldName, argIndex, c).
+    fieldContribArgCount(transitionName, fieldName, fieldKey, transArg, argIndex, c).
 
-.decl fieldContribArg(transitionName: symbol, fieldName: symbol, argIndex: number, card: Cardinality)
-fieldContribArg(transitionName, fieldName, argIndex, "One") :-
-    _fieldContribArg(transitionName, fieldName, argIndex, "One"),
-    !_fieldContribArg(transitionName, fieldName, argIndex, "Many").
+.decl fieldContribArg(transitionName: symbol, fieldName: symbol, fieldKey: symbol, transArg: symbol, argIndex: number, card: Cardinality)
+fieldContribArg(transitionName, fieldName, fieldKey, transArg, argIndex, "One") :-
+    _fieldContribArg(transitionName, fieldName, fieldKey, transArg, argIndex, "One"),
+    !_fieldContribArg(transitionName, fieldName,fieldKey, transArg, argIndex, "Many").
 
-fieldContribArg(transitionName, fieldName, argIndex, "Many") :-
-    _fieldContribArg(transitionName, fieldName, argIndex, "Many").
+fieldContribArg(transitionName, fieldName, fieldKey, transArg, argIndex, "Many") :-
+    _fieldContribArg(transitionName, fieldName, fieldKey, transArg, argIndex, "Many").
 
 .output fieldContribArg
